@@ -1,16 +1,14 @@
 //! Consensus message handler that bridges Malachite consensus to the Reth application
 
-use eyre::eyre;
-use tracing::{error, info};
-
-use malachitebft_app_channel::{AppMsg, Channels, ConsensusMsg, NetworkMsg};
-use malachitebft_core_types::{Height as _, Round, Validity};
-
 use crate::app::State;
 use crate::context::MalachiteContext;
+use eyre::eyre;
+use malachitebft_app_channel::{AppMsg, Channels, ConsensusMsg, NetworkMsg};
+use malachitebft_core_types::{Height as _, Round, Validity};
+use tracing::{error, info};
 
 /// Run the consensus message handler loop
-/// 
+///
 /// This function receives messages from the Malachite consensus engine and
 /// delegates them to the appropriate methods on the application state.
 pub async fn run_consensus_handler(
@@ -22,11 +20,11 @@ pub async fn run_consensus_handler(
             // Consensus is ready to start
             AppMsg::ConsensusReady { reply, .. } => {
                 info!("Consensus engine is ready");
-                
+
                 // Determine the starting height
                 let start_height = state.current_height;
                 let validator_set = state.get_validator_set(start_height);
-                
+
                 if reply.send((start_height, validator_set)).is_err() {
                     error!("Failed to send ConsensusReady reply");
                 }
@@ -41,7 +39,7 @@ pub async fn run_consensus_handler(
                 reply_value,
             } => {
                 info!(%height, %round, %proposer, ?role, "Started new round");
-                
+
                 // Update state with current round info
                 state.current_height = height;
                 state.current_round = round;
@@ -52,10 +50,10 @@ pub async fn run_consensus_handler(
                     malachitebft_app::consensus::Role::Validator => crate::app::Role::Validator,
                     malachitebft_app::consensus::Role::None => crate::app::Role::None,
                 };
-                
+
                 // Check if we have any pending proposals for this height/round
                 let proposals = vec![]; // TODO: Query from state storage
-                
+
                 if reply_value.send(proposals).is_err() {
                     error!("Failed to send StartedRound reply");
                 }
@@ -69,7 +67,7 @@ pub async fn run_consensus_handler(
                 reply,
             } => {
                 info!(%height, %round, "Consensus requesting value to propose");
-                
+
                 // Check if we've already built a value for this height/round
                 match state.get_previously_built_value(height, round).await? {
                     Some(proposal) => {
@@ -85,7 +83,7 @@ pub async fn run_consensus_handler(
                                 if reply.send(proposal.clone()).is_err() {
                                     error!("Failed to send GetValue reply");
                                 }
-                                
+
                                 // Stream the proposal parts to peers
                                 for part in state.stream_proposal(proposal, Round::Nil) {
                                     channels
@@ -119,7 +117,7 @@ pub async fn run_consensus_handler(
             // Received a proposal part from another validator
             AppMsg::ReceivedProposalPart { from, part, reply } => {
                 info!(%from, "Received proposal part");
-                
+
                 match state.received_proposal_part(from, part).await {
                     Ok(proposed_value) => {
                         if reply.send(proposed_value).is_err() {
@@ -155,14 +153,14 @@ pub async fn run_consensus_handler(
                     value = %certificate.value_id,
                     "Consensus decided on value"
                 );
-                
+
                 // Commit the decided value
                 match state.commit(certificate.clone(), extensions).await {
                     Ok(_) => {
                         // Move to next height
                         let next_height = state.current_height.increment();
                         state.current_height = next_height;
-                        
+
                         if reply
                             .send(ConsensusMsg::StartHeight(
                                 next_height,
@@ -198,7 +196,7 @@ pub async fn run_consensus_handler(
                 reply,
             } => {
                 info!(%height, %round, "Processing synced value");
-                
+
                 if let Some(value) = crate::app::decode_value(value_bytes) {
                     let proposed_value = malachitebft_app_channel::app::types::ProposedValue {
                         height,
@@ -208,26 +206,28 @@ pub async fn run_consensus_handler(
                         value,
                         validity: Validity::Valid,
                     };
-                    
+
                     // Store the synced value
-                    if let Err(e) = state.store.store_undecided_proposal(proposed_value.clone()).await {
+                    if let Err(e) = state
+                        .store
+                        .store_undecided_proposal(proposed_value.clone())
+                        .await
+                    {
                         error!(%e, "Failed to store synced proposal");
                     }
-                    
+
                     if reply.send(Some(proposed_value)).is_err() {
                         error!("Failed to send ProcessSyncedValue reply");
                     }
-                } else {
-                    if reply.send(None).is_err() {
-                        error!("Failed to send ProcessSyncedValue reply");
-                    }
+                } else if reply.send(None).is_err() {
+                    error!("Failed to send ProcessSyncedValue reply");
                 }
             }
 
             // Request for a decided value at a specific height
             AppMsg::GetDecidedValue { height, reply } => {
                 info!(%height, "Request for decided value");
-                
+
                 let decided_value = state.get_decided_value(height).await;
                 let raw_value = decided_value.map(|dv| {
                     malachitebft_app_channel::app::types::sync::RawDecidedValue {
@@ -235,7 +235,7 @@ pub async fn run_consensus_handler(
                         value_bytes: crate::app::encode_value(&dv.value),
                     }
                 });
-                
+
                 if reply.send(raw_value).is_err() {
                     error!("Failed to send GetDecidedValue reply");
                 }
@@ -258,22 +258,27 @@ pub async fn run_consensus_handler(
                 value_id,
             } => {
                 info!(%height, %round, %valid_round, "Restreaming proposal");
-                
+
                 // Look for the proposal at valid_round or round
                 let proposal_round = if valid_round == Round::Nil {
                     round
                 } else {
                     valid_round
                 };
-                
-                match state.store.get_undecided_proposal(height, proposal_round, value_id).await {
+
+                match state
+                    .store
+                    .get_undecided_proposal(height, proposal_round, value_id)
+                    .await
+                {
                     Ok(Some(proposal)) => {
-                        let locally_proposed = malachitebft_app_channel::app::types::LocallyProposedValue {
-                            height,
-                            round,
-                            value: proposal.value,
-                        };
-                        
+                        let locally_proposed =
+                            malachitebft_app_channel::app::types::LocallyProposedValue {
+                                height,
+                                round,
+                                value: proposal.value,
+                            };
+
                         // Stream the proposal parts
                         for part in state.stream_proposal(locally_proposed, valid_round) {
                             channels
@@ -292,7 +297,7 @@ pub async fn run_consensus_handler(
             }
         }
     }
-    
+
     // Channel closed, consensus has stopped
     Err(eyre!("Consensus channel closed unexpectedly"))
 }

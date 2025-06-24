@@ -2,8 +2,7 @@
 
 use malachitebft_app::config::{
     ConsensusConfig as MalachiteConsensusConfig, DiscoveryConfig, LoggingConfig, MetricsConfig,
-    P2pConfig, PubSubProtocol, RuntimeConfig, TimeoutConfig, ValuePayload,
-    ValueSyncConfig,
+    P2pConfig, PubSubProtocol, RuntimeConfig, TimeoutConfig, ValuePayload, ValueSyncConfig,
 };
 use malachitebft_app::node::NodeConfig as MalachiteNodeConfig;
 use serde::{Deserialize, Serialize};
@@ -33,16 +32,16 @@ impl NodeConfig {
     pub fn new(moniker: String, listen_addr: String, peers: Vec<String>) -> Self {
         let listen_addr = multiaddr::Multiaddr::from_str(&listen_addr)
             .unwrap_or_else(|_| "/ip4/127.0.0.1/tcp/26656".parse().unwrap());
-        
-        let persistent_peers = peers.into_iter()
+
+        let persistent_peers = peers
+            .into_iter()
             .filter_map(|p| multiaddr::Multiaddr::from_str(&p).ok())
             .collect();
-        
+
         Self {
             moniker,
             consensus: MalachiteConsensusConfig {
                 value_payload: ValuePayload::ProposalAndParts,
-                queue_capacity: 100,
                 timeouts: TimeoutConfig::default(),
                 p2p: P2pConfig {
                     protocol: PubSubProtocol::default(),
@@ -178,10 +177,10 @@ impl EngineConfig {
     /// Add peer addresses
     pub fn with_peers(mut self, peers: Vec<String>) -> Self {
         self.network.peers = peers.clone();
-        self.node.consensus.p2p.persistent_peers = peers.into_iter()
+        self.node.consensus.p2p.persistent_peers = peers
+            .into_iter()
             .filter_map(|p| multiaddr::Multiaddr::from_str(&p).ok())
             .collect();
         self
     }
 }
-

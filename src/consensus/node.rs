@@ -1,24 +1,23 @@
 //! Node trait implementation for Malachite consensus engine
 
-use async_trait::async_trait;
-use malachitebft_app::node::{
-    CanGeneratePrivateKey, CanMakeConfig, CanMakeGenesis, CanMakePrivateKeyFile, EngineHandle, MakeConfigSettings,
-    Node, NodeHandle,
+use crate::{
+    app::{Genesis, State},
+    consensus::config::{EngineConfig, NodeConfig},
+    context::{BasePeerAddress, MalachiteContext},
+    provider::{Ed25519Provider, PrivateKey, PublicKey},
+    types::Address,
 };
+use async_trait::async_trait;
 use malachitebft_app::events::{RxEvent, TxEvent};
+use malachitebft_app::node::{
+    CanGeneratePrivateKey, CanMakeConfig, CanMakeGenesis, CanMakePrivateKeyFile, EngineHandle,
+    MakeConfigSettings, Node, NodeHandle,
+};
 use malachitebft_app::types::core::VotingPower;
 use malachitebft_app::types::Keypair;
-use malachitebft_core_types::PublicKey as MalachitePublicKey;
 use rand::{CryptoRng, RngCore};
 use std::path::PathBuf;
 use tokio::task::JoinHandle;
-
-use crate::context::{MalachiteContext, BasePeerAddress};
-use crate::provider::{Ed25519Provider, PrivateKey, PublicKey};
-use crate::types::Address;
-use crate::app::{Genesis, State};
-
-use super::config::{EngineConfig, NodeConfig};
 
 /// Implementation of Malachite's Node trait for reth-malachite
 #[derive(Clone)]
@@ -37,11 +36,7 @@ pub struct MalachiteNodeImpl {
 
 impl MalachiteNodeImpl {
     /// Create a new node implementation
-    pub fn new(
-        config: EngineConfig,
-        home_dir: PathBuf,
-        app_state: State,
-    ) -> Self {
+    pub fn new(config: EngineConfig, home_dir: PathBuf, app_state: State) -> Self {
         let genesis_file = home_dir.join("genesis.json");
         let private_key_file = home_dir.join("priv_validator_key.json");
 
@@ -99,10 +94,10 @@ impl Node for MalachiteNodeImpl {
     fn get_address(&self, pk: &PublicKey) -> BasePeerAddress {
         // Convert public key to address
         // For now, use a simple derivation - in production this would follow the chain's address scheme
-        let pk_bytes = pk.to_bytes();
+        let pk_bytes = pk.as_bytes();
         let mut addr_bytes = [0u8; 20];
         addr_bytes.copy_from_slice(&pk_bytes[..20]);
-        Address::new(addr_bytes)
+        BasePeerAddress::from(Address::new(addr_bytes))
     }
 
     fn get_public_key(&self, pk: &PrivateKey) -> PublicKey {
@@ -111,7 +106,7 @@ impl Node for MalachiteNodeImpl {
 
     fn get_keypair(&self, pk: PrivateKey) -> Keypair {
         // Convert our private key to Malachite's Keypair type
-        let sk_bytes = pk.to_bytes();
+        let sk_bytes = pk.inner().to_bytes();
         Keypair::ed25519_from_bytes(sk_bytes).expect("valid ed25519 key")
     }
 
@@ -133,7 +128,10 @@ impl Node for MalachiteNodeImpl {
         }
     }
 
-    fn get_signing_provider(&self, private_key: malachitebft_core_types::PrivateKey<MalachiteContext>) -> Self::SigningProvider {
+    fn get_signing_provider(
+        &self,
+        _private_key: malachitebft_core_types::PrivateKey<MalachiteContext>,
+    ) -> Self::SigningProvider {
         // Convert malachitebft_core_types::PrivateKey to our LocalPrivateKey
         // For now, this is a placeholder
         Ed25519Provider::new_test()
@@ -148,20 +146,20 @@ impl Node for MalachiteNodeImpl {
         let private_key_file = self.load_private_key_file()?;
         let private_key = self.load_private_key(private_key_file);
         let public_key = self.get_public_key(&private_key);
-        let address = self.get_address(&public_key);
-        let signing_provider = self.get_signing_provider(private_key);
+        let _address = self.get_address(&public_key);
+        let _signing_provider = self.get_signing_provider(private_key);
         let ctx = self.app_state.ctx.clone();
 
-        let genesis = self.load_genesis()?;
-        let initial_validator_set = self.app_state.get_validator_set(crate::Height::INITIAL);
+        let _genesis = self.load_genesis()?;
+        let initial_validator_set = self.app_state.get_validator_set(crate::height::Height(1));
 
         // Start the Malachite consensus engine
         let (mut channels, engine_handle) = malachitebft_app_channel::start_engine(
             ctx.clone(),
             self.clone(),
-            config.into(), // Convert to Malachite's config type
-            crate::context::ProtoCodec, // WAL codec
-            crate::context::ProtoCodec, // Network codec
+            config,                   // Convert to Malachite's config type
+            crate::codec::ProtoCodec, // WAL codec
+            crate::codec::ProtoCodec, // Network codec
             self.config.start_height,
             initial_validator_set,
         )
@@ -172,7 +170,9 @@ impl Node for MalachiteNodeImpl {
         // Spawn the application handler task
         let mut app_state = self.app_state.clone();
         let app_handle = tokio::spawn(async move {
-            if let Err(e) = super::handler::run_consensus_handler(&mut app_state, &mut channels).await {
+            if let Err(e) =
+                super::handler::run_consensus_handler(&mut app_state, &mut channels).await
+            {
                 tracing::error!(%e, "Consensus handler error");
             }
         });
@@ -191,22 +191,21 @@ impl Node for MalachiteNodeImpl {
 }
 
 impl CanMakeGenesis for MalachiteNodeImpl {
-    fn make_genesis(&self, validators: Vec<(PublicKey<MalachiteContext>, VotingPower)>) -> Self::Genesis {
+    fn make_genesis(&self, validators: Vec<(PublicKey, VotingPower)>) -> Self::Genesis {
         // Create genesis with the given validators
         let validator_infos = validators
             .into_iter()
-            .map(|(pk, vp)| {
+            .map(|(_pk, vp)| {
                 // For now, use a placeholder conversion
                 // In production, derive address properly from public key
                 let address = Address::new([0u8; 20]);
                 let pk_bytes = vec![0u8; 32]; // Placeholder
-                
+
                 crate::app::ValidatorInfo::new(address, vp, pk_bytes)
             })
             .collect();
 
-        Genesis::new(self.config.network.chain_id.clone())
-            .with_validators(validator_infos)
+        Genesis::new(self.config.network.chain_id.clone()).with_validators(validator_infos)
     }
 }
 
@@ -226,12 +225,12 @@ impl CanMakePrivateKeyFile for MalachiteNodeImpl {
 }
 
 impl CanMakeConfig for MalachiteNodeImpl {
-    fn make_config(_index: usize, _total: usize, _settings: MakeConfigSettings) -> Self::Config {
+    fn make_config(index: usize, _total: usize, _settings: MakeConfigSettings) -> Self::Config {
         // For now, return a default config
         // In production, this would generate appropriate config for node index out of total
         NodeConfig::new(
-            format!("node-{}", _index),
-            format!("127.0.0.1:{}", 26000 + _index),
+            format!("node-{index}"),
+            format!("127.0.0.1:{}", 26000 + index),
             Vec::new(),
         )
     }
