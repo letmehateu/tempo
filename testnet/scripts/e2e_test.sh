@@ -35,9 +35,21 @@ check_block_height() {
         -H "Content-Type: application/json" \
         -d '{"jsonrpc":"2.0","method":"eth_blockNumber","params":[],"id":1}' 2>/dev/null || echo "")
     
+    # Debug: log the response
+    if [ -n "$response" ]; then
+        >&2 echo "DEBUG: Response from port $port: $response"
+    else
+        >&2 echo "DEBUG: Empty response from port $port"
+    fi
+    
     if [ -n "$response" ] && echo "$response" | grep -q "result"; then
         local block_hex=$(echo "$response" | grep -o '"result":"0x[0-9a-fA-F]*"' | cut -d'"' -f4)
-        echo $((16#${block_hex#0x}))
+        if [ -n "$block_hex" ]; then
+            echo $((16#${block_hex#0x}))
+        else
+            >&2 echo "DEBUG: Could not extract block hex from result"
+            echo 0
+        fi
     else
         echo 0
     fi
