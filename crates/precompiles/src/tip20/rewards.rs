@@ -46,7 +46,7 @@ impl<'a, S: PrecompileStorageProvider> TIP20Token<'a, S> {
 
         self._transfer(msg_sender, token_address, call.amount)?;
 
-        if call.seconds == 0 {
+        if call.secs == 0 {
             let opted_in_supply = self.get_opted_in_supply()?;
             if opted_in_supply.is_zero() {
                 return Err(TIP20Error::no_opted_in_supply().into());
@@ -80,7 +80,7 @@ impl<'a, S: PrecompileStorageProvider> TIP20Token<'a, S> {
             let rate = call
                 .amount
                 .checked_mul(ACC_PRECISION)
-                .and_then(|v| v.checked_div(U256::from(call.seconds)))
+                .and_then(|v| v.checked_div(U256::from(call.secs)))
                 .ok_or(TempoPrecompileError::under_overflow())?;
             let stream_id = self.get_next_stream_id()?;
             let next_stream_id = stream_id
@@ -96,7 +96,7 @@ impl<'a, S: PrecompileStorageProvider> TIP20Token<'a, S> {
 
             let current_time = self.storage.timestamp().to::<u128>();
             let end_time = current_time
-                .checked_add(call.seconds)
+                .checked_add(call.secs)
                 .ok_or(TempoPrecompileError::under_overflow())?;
 
             RewardStream::new(
@@ -127,7 +127,7 @@ impl<'a, S: PrecompileStorageProvider> TIP20Token<'a, S> {
                     funder: msg_sender,
                     id: stream_id,
                     amount: call.amount,
-                    durationSeconds: call.seconds as u32,
+                    durationSeconds: call.secs as u32,
                 })
                 .into_log_data(),
             )?;
@@ -888,7 +888,7 @@ mod tests {
             admin,
             ITIP20::startRewardCall {
                 amount: reward_amount,
-                seconds: 10,
+                secs: 10,
             },
         )?;
         assert_eq!(stream_id, 1);
@@ -974,7 +974,7 @@ mod tests {
             admin,
             ITIP20::startRewardCall {
                 amount: reward_amount,
-                seconds: 10,
+                secs: 10,
             },
         )?;
 
@@ -1036,7 +1036,7 @@ mod tests {
             admin,
             ITIP20::startRewardCall {
                 amount: reward_amount,
-                seconds: 0,
+                secs: 0,
             },
         )?;
 
@@ -1085,7 +1085,7 @@ mod tests {
             admin,
             ITIP20::startRewardCall {
                 amount: reward_amount,
-                seconds: 100,
+                secs: 100,
             },
         )?;
 
@@ -1149,7 +1149,7 @@ mod tests {
             admin,
             ITIP20::startRewardCall {
                 amount: reward_amount,
-                seconds: stream_duration,
+                secs: stream_duration,
             },
         )?;
 
@@ -1216,7 +1216,7 @@ mod tests {
             admin,
             ITIP20::startRewardCall {
                 amount: reward_amount,
-                seconds: 0,
+                secs: 0,
             },
         )?;
 
@@ -1267,7 +1267,7 @@ mod tests {
             admin,
             ITIP20::startRewardCall {
                 amount: reward_amount,
-                seconds: 20,
+                secs: 20,
             },
         )?;
 
